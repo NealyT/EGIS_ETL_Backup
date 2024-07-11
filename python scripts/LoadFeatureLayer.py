@@ -60,7 +60,7 @@ def load_urls_from_db(host, dbname, user, password):
         # Create a cursor object
         cur = conn.cursor()
         # where_clause = " WHERE collection_id = 3"
-        where_clause = ""
+        where_clause = "where acronym = 'REMIS'"
         # Build the SQL query with WHERE clause
         sql = f"SELECT url, acronym FROM meta.collection_hosted_url {where_clause}"
 
@@ -95,7 +95,7 @@ def load_urls_from_file(location):
         # Connect to the PostgreSQL database
         path = os.path.join(location, 'collection_hosted_url.csv')
         df = pd.read_csv(path, delimiter=',')
-        return df;
+        return df
     except Exception as e:
         print(e)
 
@@ -111,14 +111,19 @@ def load_data(ogr_location, base_url, product, output_location, urlJson, host, d
         for child in urlJson["layers"]:
             child_layer = arcpy.FeatureSet()
             print(f"Loading Layer: {child['name']}...")
+
             url = f'{base_url}/{child["id"]}?f=pjson'
+            standard_name = child["name"].strip().replace(' ', '_').lower()
+
             response = requests.get(url)
             esrijson_data = json.loads(response.text)
 
             child_layer.load(url)
+            try:
+                jsonChild = json.loads(child_layer.JSON)
+            except Exception as e:
+                jsonChild=esrijson_data
 
-            jsonChild = json.loads(child_layer.JSON)
-            standard_name = child["name"].strip().replace(' ', '_').lower()
             try:
                 if hasattr(child_layer, "GeoJSON"):
                     child_data = json.loads(child_layer.GeoJSON)
