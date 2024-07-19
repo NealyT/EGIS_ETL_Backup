@@ -22,7 +22,7 @@ SET row_security = off;
 -- TOC entry 26 (class 2615 OID 87759)
 -- Name: catalog; Type: SCHEMA; Schema: -; Owner: catalog
 --
-
+CREATE SCHEMA ogr_system_tables AUTHORIZATION catalog;
 CREATE SCHEMA catalog ;
 
 

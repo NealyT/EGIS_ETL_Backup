@@ -36,7 +36,7 @@ def check_schema(schema_name, host, dbname, user, password):
             print(f"The schema '{lschema}' exists.")
         else:
             print(f"The schema '{lschema}' does not exist.")
-            create_schema_query = f"CREATE SCHEMA {lschema};"
+            create_schema_query = f"CREATE SCHEMA {lschema} AUTHORIZATION {user};"
 
             cur.execute(create_schema_query)
             conn.commit()
@@ -60,9 +60,10 @@ def load_urls_from_db(host, dbname, user, password):
         # Create a cursor object
         cur = conn.cursor()
         # where_clause = " WHERE collection_id = 3"
-        where_clause = "where acronym = 'REMIS'"
+        where_clause = "where acronym = 'RECREATION'"
+        # where_clause = ""
         # Build the SQL query with WHERE clause
-        sql = f"SELECT url, acronym FROM meta.collection_hosted_url {where_clause}"
+        sql = f"SELECT url, acronym FROM catalog.collection_hosted_url {where_clause}"
 
         # Execute the query
         cur.execute(sql)
@@ -149,7 +150,7 @@ def load_data(ogr_location, base_url, product, output_location, urlJson, host, d
                 if hasattr(child_layer, "GeoJSON"):
                     file_name = saveGeoJson(standard_name, child_layer, output_location)
                 else:
-                    file_name = convertEsriJsonToGeoJson(output_location, standard_name)
+                    file_name = convertEsriJsonToGeoJson(ogr_location,output_location, standard_name)
                 if post_data:
                     if file_name is not None:
                         table_name = f'{product}.{standard_name}'
