@@ -60,7 +60,7 @@ def load_urls_from_db(host, dbname, user, password):
         # Create a cursor object
         cur = conn.cursor()
         # where_clause = " WHERE collection_id = 3"
-        where_clause = "where acronym = 'RECREATION'"
+        where_clause = "where acronym = 'NID'"
         # where_clause = ""
         # Build the SQL query with WHERE clause
         sql = f"SELECT url, acronym FROM catalog.collection_hosted_url {where_clause}"
@@ -151,11 +151,7 @@ def load_data(ogr_location, base_url, product, output_location, urlJson, host, d
                     file_name = saveGeoJson(standard_name, child_layer, output_location)
                 else:
                     file_name = convertEsriJsonToGeoJson(ogr_location,output_location, standard_name)
-                if post_data:
-                    if file_name is not None:
-                        table_name = f'{product}.{standard_name}'
-                        print(f"Loading PostgreSql table {table_name}...")
-                        postGIS(ogr_location, product, file_name, table_name, host, dbname, user_name, password)
+
             except Exception as e:
                 print(e)
     if "tables" in urlJson:
@@ -168,9 +164,6 @@ def load_data(ogr_location, base_url, product, output_location, urlJson, host, d
             field_names = [field.name for field in desc["fields"]]
             table_data[child["name"]] = field_names
             file_name = dumpCSV(standard_name, child_layer, output_location)
-            if post_data:
-                table_name = f'{product}.{standard_name}'
-                postGIS(ogr_location, product, file_name, table_name, host, dbname, user_name, password)
 
     if "tables" not in urlJson and "layers" not in urlJson:
         feature_layer = arcpy.FeatureSet()
@@ -318,7 +311,7 @@ def postGIS(ogr_location, product, file_path, table_name, host, dbname, user, pa
     check_schema(product, host, dbname, user, password)
     postgres_connection_string = f'PG:host={host} dbname={dbname} user={user} password={password}'
     flags = '-skipfailures'
-
+    print(file_path)
     command = [
         ogr_location,
         "-f", "PostgreSQL",  # Output format
@@ -354,6 +347,7 @@ if __name__ == "__main__":
     df = load_urls_from_db(host, dbname, user_name, password)
 
     table_data = {}
+    # Create geojson files for each service, layer
     for index, row in df.iterrows():
         acronym = row['acronym']
         url = row['url'].strip()
@@ -365,9 +359,21 @@ if __name__ == "__main__":
             output_location = os.path.join(base_location, acronym)
             if not os.path.exists(output_location):
                 os.makedirs(output_location)
+
             table_data = load_data(ogr_location, url, acronym, output_location, urlJson, host, dbname, user_name,
                                    password,
                                    {}, post_data=True)
 
         except Exception as e:
             print(e)
+
+        output_location = os.path.join(base_location,acronym)
+        for file in os.listdir(output_location):
+
+            product, ext = os.path.splitext(file)
+            if file.endswith(".geojson") or file.endswith(".csv"):
+                file_path = os.path.join(output_location, f"{product}{ext}")
+
+                table_name = f'{acronym}.{product}'
+                print(table_name)
+                postGIS(ogr_location, acronym, file_path, table_name, host, dbname, user_name, password)

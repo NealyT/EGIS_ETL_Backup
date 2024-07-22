@@ -14,38 +14,7 @@ import psycopg2
 import requests
 import tkinter as tk
 from tkinter import simpledialog
-from arcgis.features import FeatureLayer
 import pandas as pd
-
-'''
-{
-    "baseProducts": [
-        {
-            "title": "Soil FootPrints",
-            "factsheet": "",
-            "cmb_mapserver_layer": "STTC_Soil_Footprints",
-            "security_classification": "XXX-STTC-XXX",
-            "map_display_layer_config": {
-                "agc_layer_type": "MapServer",
-                "url": "https://scterraindash.org/server/rest/services/sttc_soil_raster_export/MapServer",
-                "title": "Soil Raster Data",
-                "minScale": 2500000,
-                "sublayers": [ {
-                        "id": 2
-                    } ]
-            },
-            "popup_config": {
-                "title": "STTC Soil - {location}",
-                "fields": [
-                    "location",
-                    "area (sqkm)"
-                ]
-            }
-        }
-
-    ]
-}
-'''
 
 
 def contains_any(text, values):
@@ -185,7 +154,7 @@ def load_urls_from_db(host, dbname, user, password):
         cur = conn.cursor()
 
         # Build the SQL query with WHERE clause
-        sql = f"SELECT collection_id,collection_name,urls,acronym,factsheet FROM meta.product_configs"
+        sql = f"SELECT collection_id,collection_name,urls,acronym,factsheet FROM catalog.product_configs"
 
         # Execute the query
         cur.execute(sql)
@@ -276,13 +245,21 @@ if __name__ == "__main__":
                             if contains_any(ltitle, ["dam", "levee", "reservoir"]):
                                 filters.append("Dams")
                             if contains_any(ltitle,
-                                            ["sea", "river", "canal", "harbour", "lake", "reservoir", "waterbody",
+                                            ["channel", "sea", "river", "canal", "harbour", "lake", "reservoir", "waterbody",
                                              "lock basin"]):
                                 filters.append("WaterBodies")
                             if contains_any(ltitle, ["pipe"]):
                                 filters.append("PipeLines")
+                            if contains_any(ltitle, ["port", "linkton"]):
+                                filters.append("Commerce")
+                            if contains_any(ltitle, ["flood","inundation"]):
+                                filters.append("Flood")
                             if contains_any(ltitle, ["dock"]):
                                 filters.append("Docks")
+                            if contains_any(ltitle, ["DIS","Dredg"]):
+                                filters.append("Dredging")
+                            if contains_any(ltitle, ["parcel","port","facility"]):
+                                filters.append("Real Estate")
                             pConfig = ProductConfigItem(title, child['name'], popupConfig(child['name'], names),
                                                         filters)
                             productConfigList.append(pConfig)
