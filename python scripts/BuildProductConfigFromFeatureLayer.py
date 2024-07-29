@@ -45,11 +45,12 @@ def camel_case(text):
 
 
 class parentConfigurationItem:
-    def __init__(self, title, product, url, factsheet, products):
+    def __init__(self, title, product, url, factsheet, products, factsheet2):
         self.title = title
         self.product = product
         self.url = url
         self.factsheet = factsheet
+        self.factsheet2 = factsheet2
         self.base_products = products
         self.filters = filters
 
@@ -61,6 +62,8 @@ class parentConfigurationItem:
             'security_classification': f"XXX-{self.product}-XXX",
             'mapServiceUrl': f"{self.url}",
             'factsheet': f"{self.factsheet}",
+            'factsheet2': f"{self.factsheet2}",
+            "product_filters": self.filters,
             'popup_config': {
                 'title': f'{self.product}'
             },
@@ -154,7 +157,7 @@ def load_urls_from_db(host, dbname, user, password):
         cur = conn.cursor()
 
         # Build the SQL query with WHERE clause
-        sql = f"SELECT collection_id,collection_name,urls,acronym,factsheet FROM catalog.product_configs"
+        sql = f"SELECT collection_id,collection_name,sample_url as factsheet2,urls,acronym,factsheet FROM catalog.product_configs"
 
         # Execute the query
         cur.execute(sql)
@@ -167,7 +170,7 @@ def load_urls_from_db(host, dbname, user, password):
         conn.close()
 
         # Create a pandas DataFrame from the fetched data
-        df = pd.DataFrame(rows, columns=["collection_id", "collection_name", "urls", "acronym", "factsheet"])
+        df = pd.DataFrame(rows, columns=["collection_id", "collection_name","factsheet2", "urls", "acronym", "factsheet"])
 
         return df
 
@@ -203,10 +206,12 @@ if __name__ == "__main__":
 
     product_configs = load_urls_from_db(host, dbname, user_name, password)
     parentConfigList = []
+    parentFilters = []
     for index, row in product_configs.iterrows():
         acronym = row['acronym']
         collection_name = row['collection_name']
         factsheet = row['factsheet']
+        factsheet2 = row['factsheet2']
         urls = []
         if 'urls' in row and not isinstance(row['urls'], float):
             urls = row['urls'].strip().split(";")
@@ -233,39 +238,45 @@ if __name__ == "__main__":
                         for child in urlJson["layers"]:
 
                             url = f'{base_url}/{child["id"]}'
-                            print(f"Loading Layer: {child['name']} {child['geometryType']} {url}")
+
+                            feature_count2 = int(arcpy.GetCount_management(url)[0])
+                            print(f"Loading Layer: {child['name']} {feature_count2} {child['geometryType']} {url}")
                             desc = arcpy.Describe(url)
                             names = [field.name for field in desc.fields]
                             title = child['name'].replace("_", " ")
 
                             ltitle = title.lower()
                             filters = []
-                            if contains_any(ltitle, ["dam", "structure"]):
+                            if contains_any(ltitle, ["dam", "structure"]) and 'damage' not in ltitle:
                                 filters.append("Structures")
-                            if contains_any(ltitle, ["dam", "levee", "reservoir"]):
+                            if contains_any(ltitle, ["dam", "levee", "reservoir"]) and 'damage' not in ltitle:
                                 filters.append("Dams")
                             if contains_any(ltitle,
-                                            ["channel", "sea", "river", "canal", "harbour", "lake", "reservoir", "waterbody",
-                                             "lock basin"]):
+                                            ["channel", "sea", "shore", "coast","river", "canal", "harbour", "lake",  "reservoir", "water",
+                                             "basin"]):
                                 filters.append("WaterBodies")
                             if contains_any(ltitle, ["pipe"]):
                                 filters.append("PipeLines")
                             if contains_any(ltitle, ["port", "linkton"]):
                                 filters.append("Commerce")
-                            if contains_any(ltitle, ["flood","inundation"]):
+                            if contains_any(ltitle, ["flood","inundation","levee"]):
                                 filters.append("Flood")
                             if contains_any(ltitle, ["dock"]):
                                 filters.append("Docks")
-                            if contains_any(ltitle, ["DIS","Dredg"]):
+                            if contains_any(ltitle, ["dredg","sediment"]):
                                 filters.append("Dredging")
-                            if contains_any(ltitle, ["parcel","port","facility"]):
+                            if contains_any(ltitle, ["coast", "cspi","shore"]):
+                                    filters.append("Coastal")
+                            if contains_any(ltitle, ["parcel","port","facility","property"]):
                                 filters.append("Real Estate")
                             pConfig = ProductConfigItem(title, child['name'], popupConfig(child['name'], names),
                                                         filters)
                             productConfigList.append(pConfig)
+                            parentFilters.extend(filters)
+
                 except Exception as e:
-                    print(f"{e.message}")
-        parentConfig = parentConfigurationItem(name, acronym, base_url, factsheet, productConfigList)
+                    print(f"{e}")
+        parentConfig = parentConfigurationItem(name, acronym, base_url, factsheet, productConfigList,factsheet2)
         parentConfigList.append(parentConfig)
 
     prodConfig = productConfig(parentConfigList)
