@@ -73,7 +73,7 @@ class LoadHistory:
 
 
 class LoadHistoryItem:
-    def __init__(self, load_id, source_id, source_path, definition, json):
+    def __init__(self, load_id, source_id, source_path, records, definition, json):
         self.load_id = load_id
         self.source_id = source_id
         self.load_datetime = datetime.datetime.now()
@@ -88,11 +88,13 @@ class LoadHistoryItem:
         self.original_col_types = [l['type'] for l in definition["fields"]],
         self.revised_col_types = []
         self.configs = json
+        self.record_count = records
 
     def getData(self):
         return (self.load_id,
                 self.original_name,
                 self.revised_name,
+                self.record_count,
                 self.load_status,
                 self.item_path,
                 self.srid,
@@ -349,9 +351,9 @@ def add_load_history_record(source_record, is_child=False):
         """
 
         insert_child_query = """
-             INSERT INTO load_history_item (load_id, original_name, revised_name, load_status, 
+             INSERT INTO load_history_item (load_id, original_name, revised_name, feature_count, load_status, 
              item_path, srid, last_seq, original_col_names, revised_col_names, original_col_types, revised_col_types, configs)
-             VALUES( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             VALUES( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
              RETURNING item_id
         """
         if not is_child:
@@ -391,9 +393,14 @@ def test_url_information(source, load_id=None, is_child=False):
             for child in esrijson_data["layers"]:
                 child_url = f"{gb.product.source_path}/{child['id']}"
                 test_url_information(child_url, load_id, is_child=True)
+        if "tables" in esrijson_data:
+            for child in esrijson_data["tables"]:
+                child_url = f"{gb.product.source_path}/{child['id']}"
+                test_url_information(child_url, load_id, is_child=True)
 
     else:
-        loadHistoryItem = LoadHistoryItem(load_id, gb.product.source_id, source, esrijson_data, response.text)
+        feature_count = int(arcpy.GetCount_management(source)[0])
+        loadHistoryItem = LoadHistoryItem(load_id, gb.product.source_id, source, feature_count, esrijson_data, response.text)
         add_load_history_record(loadHistoryItem, is_child=True)
     logger.info(f"Done Initiating query of data from url: {gb.product.source_path}")
 
