@@ -1,0 +1,6 @@
+import arcgis
+
+gis = arcgis.GIS("https://your_portal.arcgis.com")
+item = gis.content.get("item_id")  # Replace with your item ID
+fs = item.layers[0]  # Assuming it's a feature service
+print(fs.properties)

@@ -2,8 +2,8 @@
 $url = "https://nid.sec.usace.army.mil/api/nation/csv"
 $outputPath = "D:\data\bah\NID\nation.csv"
 database = "egis_bah"
-user = "catalog"
-password = "catalog"
+user = "catg"
+password = "catg123"
 table = "nid.dams_ads"
 host = "localhost"
 

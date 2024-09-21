@@ -1,0 +1,27 @@
+from arcgis.gis import GIS
+import arcpy
+import os
+import tempfile
+import re
+
+project_dir = r'D:\\Users\nealie.t\Documents\ArcGIS\Projects\EGIS_1'
+project_path = f'{project_dir}\EGIS_1.aprx'
+
+connection_file = r'D:\\Users\nealie.t\Documents\ArcGIS\Projects\EGIS_1\cspi-egis-dev.sde'
+sde_connection = connection_file
+group_layer_name = "Coastal_Systems_Portfolio_Initiative"
+arcpy.env.workspace = project_path
+project = arcpy.mp.ArcGISProject(project_path)
+active_map = project.activeMap
+service_layer_map = active_map
+for map in project.listMaps():
+    print(map.name)  # Access map properties
+    if map.name=="cspi_map":
+        service_layer_map = map
+layers =[layer for layer in service_layer_map.listLayers()]
+# layers
+# for layer in layers:
+#     service_layer_map.removeLayer(layer)
+
+layers =[layer.name for layer in service_layer_map.listLayers()]
+layers
