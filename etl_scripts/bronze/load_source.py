@@ -95,8 +95,8 @@ def load_product_source_details():
 
 def create_load_schema():
     gb.logger.info(f"Checking if {gb.load_schema} Schema exists")
-    # test_sql = f"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = '{gb.load_schema}')"
-    test_sql = f"SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = '{gb.load_schema}')"
+    test_sql = f"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = '{gb.load_schema}')"
+    # test_sql = f"SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = '{gb.load_schema}')"
 
     exists = test_exists(test_sql)
     if not exists:
@@ -106,7 +106,7 @@ def create_load_schema():
             user_authentication_type="DATABASE_USER",
             user_name=gb.load_schema,
             user_password=gb.load_schema,
-            role=gb.catalog_role
+            role='etl_writer'
         )
 
 
@@ -115,23 +115,24 @@ def create_user_connection(staged_env='dev'):
     out_name = f"{gb.load_schema}-{staged_env}"
     connection_file = os.path.join(gb.sde_root, out_name)
     sde_connect_file = f'{connection_file}.sde'
-    if not os.path.exists(sde_connect_file):
-        sde_connect_file = arcpy.management.CreateDatabaseConnection(
-            out_folder_path=gb.sde_root,
-            out_name=out_name,
-            database_platform="POSTGRESQL",
-            instance=gb.db_instance,
-            account_authentication="DATABASE_AUTH",
-            username=gb.load_schema,
-            password=gb.load_schema,
-            save_user_pass="SAVE_USERNAME",
-            database=gb.db_database,
-            # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
-            version_type="TRANSACTIONAL",
-            version="sde.DEFAULT",
-            role=gb.catalog_role
-        )
-        gb.logger.info(f"Created connection file {sde_connect_file}")
+    if os.path.exists(sde_connect_file):
+        os.remove(sde_connect_file)
+    sde_connect_file = arcpy.management.CreateDatabaseConnection(
+        out_folder_path=gb.sde_root,
+        out_name=out_name,
+        database_platform="POSTGRESQL",
+        instance=gb.db_instance,
+        account_authentication="DATABASE_AUTH",
+        username=gb.load_schema,
+        password=gb.load_schema,
+        save_user_pass="SAVE_USERNAME",
+        database=gb.db_database,
+        # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
+        version_type="TRANSACTIONAL",
+        version="sde.DEFAULT",
+        role="catalog"
+    )
+    gb.logger.info(f"Created connection file {sde_connect_file}")
     return sde_connect_file
 
 def create_sde_connection(staged_env='dev'):
@@ -242,11 +243,21 @@ def move_to_egdb(input_gdb):
     for fc in feature_classes:
         input_fc = os.path.join(input_gdb, fc)
         input_fc_list.append(input_fc)
+        output_fc = f"{gb.user_connection}/{fc}"
+        gb.logger.info(f"Loading {output_fc}")
+        if arcpy.Exists(output_fc):
+        #     # arcpy.management.Rename(output_fc,f"{item.revised_name}_1")
+            gb.logger.info(f"Deleting {output_fc}")
+            arcpy.management.Delete(output_fc)
+
 
     # Use FeatureClassToGeodatabase to copy the feature classes to the SDE
     if input_fc_list:  # Check if the list is not empty
-        arcpy.FeatureClassToGeodatabase_conversion(input_fc_list, gb.sde_connection)
-        print("Feature classes copied to SDE successfully.")
+        try:
+            arcpy.FeatureClassToGeodatabase_conversion(input_fc_list, gb.user_connection)
+            print("Feature classes copied to SDE successfully.")
+        except Exception as e:
+            print(e)
     else:
         print("No feature classes found in the input file geodatabase.")
 
@@ -270,14 +281,11 @@ def load_all_to_fdb( items):
     for item in items:
         load_entity_to_db_container(item, gdb_path)
 
-
-
     # Import the file geodatabase as a schema
     # move_to_egdb(gdb_path)
     return gdb_path
 
 def load_entity_to_db_container(item, output_fc):
-    gb.logger.info(f"Loading {item.revised_name} into {output_fc}, ({item.estimated_feature_count} features)")
     # Specify the WKID
     wkid = 4326
     # item.feature.properties.srid  # Replace with the desired WKID
@@ -314,7 +322,7 @@ def load_entity_to_db_container(item, output_fc):
 
 
         item.complete_load(gb, int(arcpy.management.GetCount(output_fc)[0]))
-        gb.logger.info(f"Sucessfully Loaded {item.revised_name} into SDE")
+
 
     except Exception as e:
         gb.logger.error(e)
@@ -349,7 +357,10 @@ def load_entity_to_sde(item):
                 features = layer.query(where="1=1", out_sr=4326)
                 features.save(gb.user_connection,item.revised_name)
             else:
-                arcpy.conversion.ExportFeatures(item.item_path, output_fc)
+                try:
+                    arcpy.conversion.ExportFeatures(item.item_path, output_fc)
+                except Exception as e:
+                    print(e)
         ## TO_DO: Test if global id exists
         arcpy.AddGlobalIDs_management(output_fc)
 
@@ -372,7 +383,7 @@ def load_entity_to_sde(item):
         #             logger.info(f"Error changing field {old_name} to {revised_name}")
 
         item.complete_load(gb, int(arcpy.management.GetCount(output_fc)[0]))
-        gb.logger.info(f"Sucessfully Loaded {item.revised_name} into SDE")
+        gb.logger.info(f"Successfully Loaded {item.revised_name} into SDE")
 
     except Exception as e:
         gb.logger.error(e)
@@ -393,8 +404,8 @@ def cleanup():
     except Exception as e:
         gb.logger.error("Error removing role", e)
 
-def test_deltas():
-    gdb_path= load_all_to_fdb(gb.entities)
+def test_deltas(gdb_path):
+
     file_name, file_extension = os.path.splitext(gdb_path)
     prev_gdb_path = f"{file_name}_Archived.gdb"
     arcpy.env.workspace = prev_gdb_path
@@ -415,7 +426,7 @@ def test_deltas():
                 print("DataFrames are not equal")
         except Exception as e:
             print(e)
-
+    return gdb_path
 
 # load_sde loops through array of entities set on global and loads each
 def load_sde():
@@ -468,8 +479,11 @@ def main():
     # Remove any entry entries in the entities array
     gb.entities = [x for x in gb.entities if x is not None]
     # Begin loading data into SDE for entire feature collection
-    test_deltas()
+    # gdb_path = load_all_to_fdb(gb.entities)
+    # load_gdb = test_deltas(gdb_path)
+
     load_sde()
+    # move_to_egdb(gdb_path)
     gb.logger.info("Completed Load Process")
 
 if __name__ == "__main__":
