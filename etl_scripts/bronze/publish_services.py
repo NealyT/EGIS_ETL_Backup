@@ -1,11 +1,31 @@
 from arcgis.gis import GIS
+import arcpy
 import os
 import sys
 import datetime
-from etl_scripts.utils import *
+import etl_scripts.bronze.utils as egis_utils
 import xml.dom.minidom as DOM
 import pandas as pd
-import boto3
+
+class Globals:
+    def __init__(self, dts, args):
+        formatted_dts = dts
+        sde_root = args["sde_root"]
+        self.catalog_user = None if "catalog_user" not in args else args["catalog_user"]
+        self.sde_connection = f"{sde_root}\etl_loader-dev.sde"
+        self.product_path = args["sde_root"]
+        self.dts = formatted_dts
+        self.product = egis_utils.DataProduct(args["data_product_id"], args["source_id"])
+        self.sde_root = sde_root
+        self.user_connection = None
+        self.load_schema = None
+        self.etl_record = None
+        self.entities = None
+        self.mapped_columns = None
+        self.description = None
+        self.service_description = None
+        self.copyright_text = None
+        self.tags = None
 
 def load_product_source_details(logging, gb):
     try:
@@ -415,7 +435,7 @@ def get_web_layer_sharing_draft(gis, schema, outdir, map):
 def init_globals() -> Globals:
     logging.info("Started Load Process, Initializing")
     now = datetime.datetime.now()
-    args = process_args_publish()
+    args = egis_utils.process_args_publish()
     gb = Globals(now, args)
     logging.info(f"Loading Product data for {gb.product.product_id} Source {gb.product.source_id}")
     return gb

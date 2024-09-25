@@ -1,10 +1,10 @@
 {
-	"output_dir"    :  "D:\\data",
-	"sde_root"      :  "D:\\Users\\nealie.t\\Documents\\ArcGIS\\Projects\\EGIS3",
-	"loader_sde"    :  "etl_loader",
+	"db_user"     :  "etl_loader",
 	"db_database"   :  "egdb",
 	"db_env"   		:  "dev",
 	"db_instance"   :  "degisegdb.cvvlw7qn7lxg.us-gov-west-1.rds.amazonaws.com",
 	"catalog_role"  :  "catalog",
-	"log_dir" 		:  "D:\\Users\\nealie.t\\Documents\\ArcGIS\\Projects\\EGIS3\\logs"
+	"log_dir" 		:  "D:\\Users\\nealie.t\\Documents\\ArcGIS\\Projects\\EGIS3\\logs",
+	"sde_root"      :  "D:\\Users\\nealie.t\\Documents\\ArcGIS\\Projects\\EGIS3",
+	"output_dir"    :  "D:\\Users\\nealie.t\\Documents\\ArcGIS\\Projects\\EGIS3"
 }

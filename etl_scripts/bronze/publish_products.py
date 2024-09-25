@@ -12,6 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import fiona
 from botocore.exceptions import NoCredentialsError
+import etl_scripts.bronze.utils as egis_utils
 
 # from arcgis.features import GeoAccessor, GeoSeriesAccessor
 def cleanup_file(paths):

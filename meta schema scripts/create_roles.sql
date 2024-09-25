@@ -1,0 +1,55 @@
+-- Role: catalog
+-- DROP ROLE IF EXISTS catalog;
+
+CREATE ROLE catalog WITH
+  NOLOGIN
+  NOSUPERUSER
+  NOINHERIT
+  NOCREATEDB
+  CREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+
+GRANT pg_read_all_data TO catalog;
+
+-- Role: etl_writer
+-- DROP ROLE IF EXISTS etl_writer;
+
+CREATE ROLE etl_writer WITH
+  NOLOGIN
+  NOSUPERUSER
+  INHERIT
+  CREATEDB
+  CREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+
+GRANT sde TO etl_writer WITH ADMIN OPTION;
+
+-- Role: bronze_catalog
+-- DROP ROLE IF EXISTS bronze_catalog;
+
+CREATE ROLE bronze_catalog WITH
+  LOGIN
+  NOSUPERUSER
+  INHERIT
+  NOCREATEDB
+  NOCREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+
+GRANT catalog TO bronze_catalog;
+
+-- Role: etl_loader
+-- DROP ROLE IF EXISTS etl_loader;
+
+CREATE ROLE etl_loader WITH
+  LOGIN
+  NOSUPERUSER
+  INHERIT
+  CREATEDB
+  CREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+
+GRANT etl_writer TO etl_loader WITH ADMIN OPTION;
