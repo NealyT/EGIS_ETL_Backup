@@ -3,33 +3,36 @@ import arcpy
 import os
 import sys
 import datetime
+import argparse
 import etl_scripts.bronze.utils as egis_utils
 import xml.dom.minidom as DOM
 import pandas as pd
+from types import SimpleNamespace
 
 class Globals:
-    def __init__(self, dts, args):
-        formatted_dts = dts
-        sde_root = args["sde_root"]
-        self.catalog_user = None if "catalog_user" not in args else args["catalog_user"]
-        self.sde_connection = f"{sde_root}\etl_loader-dev.sde"
-        self.product_path = args["sde_root"]
+    def __init__(self, args, configs,logger):
+        now = datetime.datetime.now()
+        formatted_dts = now
+        self.args = args
+        self.configs =configs
+        self.logger = logger
+        self.sde_connection = f"{configs.sde_root}\{configs.db_user}-{configs.db_env}.sde"
         self.dts = formatted_dts
-        self.product = egis_utils.DataProduct(args["data_product_id"], args["source_id"])
-        self.sde_root = sde_root
-        self.user_connection = None
-        self.load_schema = None
-        self.etl_record = None
-        self.entities = None
-        self.mapped_columns = None
+        self.product = egis_utils.DataProduct(args.data_product_id, args.source_id)
         self.description = None
         self.service_description = None
         self.copyright_text = None
         self.tags = None
+        self.project=None
+        self.outdir=None
 
-def load_product_source_details(logging, gb):
+
+def load_product_source_details(gb):
     try:
-        logging.info("Retrieving data product details from RDBMS")
+        # Always want to recreate sde connection
+        if not os.path.exists(gb.sde_connection):
+            egis_utils.create_etl_connection(gb, staged_env='dev')
+        gb.logger.info("Retrieving data product details from RDBMS")
         sde_conn = arcpy.ArcSDESQLExecute(gb.sde_connection)
         where_clause = f"where data_product_id = {gb.product.product_id} and source_id = {gb.product.source_id}"
         # Build the SQL query with WHERE clause
@@ -41,7 +44,7 @@ def load_product_source_details(logging, gb):
                     properties_json ->>'serviceDescription' serviceDescription	
                 FROM etl_loader.etl_control_view {where_clause}'''
 
-        logging.info(f"SQL to get data for service definition: {sql}")
+        gb.logger.info(f"SQL to get data for service definition: {sql}")
         rows = sde_conn.execute(sql)
 
         df = pd.DataFrame(rows, columns=["path", "collection_schema", "collection_name","tags",
@@ -57,10 +60,10 @@ def load_product_source_details(logging, gb):
         gb.copyright_text = first_row['copyright_text']
         gb.tags = first_row['tags']
 
-        logging.info(f"{gb.product.schema} : {gb.product.collection_name} : {gb.product.source_path}")
+        gb.logger.info(f"{gb.product.schema} : {gb.product.collection_name} : {gb.product.source_path}")
 
     except Exception as e:
-        logging.error("Error Retrieving data product details from RDBMS", e)
+        gb.logger.error("Error Retrieving data product details from RDBMS", e)
 
 def configure_featureserver_capabilities(sddraftPath, capabilities):
     """Function to configure FeatureServer properties"""
@@ -124,15 +127,16 @@ def configure_mapserver_capabilities(sddraftPath, capabilities):
     f.close()
 
 
-def add_data(current_map):
-    sde_connection = f"{gb.sde_root}\server_connection.sde"
+def add_data(gb, current_map):
+    sde_connection = egis_utils.create_catalog_connection(gb,staged_env='dev',connection_name='connection-catalog')
     schema = gb.product.schema
     arcpy.env.workspace = sde_connection
-    feature_classes = arcpy.ListFeatureClasses()
-    schema_classes = [fc for fc in feature_classes if f'.{schema}.' in fc]
+
+    feature_classes = arcpy.ListFeatureClasses(f"*.{schema}.*")
+    schema_classes = sorted(feature_classes)
     sorted_feature_classes = schema_classes
-    tables = arcpy.ListTables()
-    table_classes = [fc for fc in tables if f'.{schema}.' in fc]
+    tables = arcpy.ListTables(f"*.{schema}.*")
+    table_classes = sorted(tables)
 
     for fc in sorted_feature_classes:
         layer_name = fc.split(".")[-1]
@@ -149,7 +153,7 @@ def add_data(current_map):
         if layer:
             # Modify layer properties if needed
             layer.name = layer_name  # Change the layer name
-    project.save()
+    gb.project.save()
 
 def set_allow_exports(docs):
     allow_export = docs.getElementsByTagName("AllowExportData")
@@ -168,10 +172,11 @@ def set_allow_exports(docs):
         # If it exists, update its value
         allow_export[0].firstChild.data = "true"  # Or "false"
 
-def create_map(product_name):
-    map_name = f"{product_name}"
+def create_map(gb):
+    map_name = f"{gb.product.collection_name}"
     map_same = None
-    for m in project.listMaps():
+
+    for m in gb.project.listMaps():
         if m.name == map_name:
             map_same = m
             break
@@ -181,14 +186,14 @@ def create_map(product_name):
             map_same.removeLayer(lyr)
         for tbl in map_same.listTables():
             map_same.removeTable(tbl)
-        project.save()
+        gb.project.save()
     else:
-        map_same = project.createMap(map_name, "MAP")
+        map_same = gb.project.createMap(map_name, "MAP")
         for lyr in map_same.listLayers():
             map_same.removeLayer(lyr)  # Remove any base map layers
-        project.save()
-    add_data(map_same)
-    logging.info(f"Map {map_name} has {len(map_same.listLayers())} layers and {len(map_same.listTables())} tables")
+        gb.project.save()
+    add_data(gb, map_same)
+    gb.logger.info(f"Map {map_name} has {len(map_same.listLayers())} layers and {len(map_same.listTables())} tables")
     return map_same
 
 
@@ -223,7 +228,9 @@ def create_services_from_datastore(schema, outdir, map, gis):
     print(published_layers)
 
 
-def create_web_layer(schema, outdir, map, copy=False):
+def create_web_layer(gb, map, copy=False):
+    schema = gb.product.schema
+    outdir = gb.outdir
     service_name = map.name.replace(" ", "_")
     sddraft_filename = service_name + "C.sddraft"
     sddraft_output_filename = os.path.join(outdir, sddraft_filename)
@@ -245,7 +252,7 @@ def create_web_layer(schema, outdir, map, copy=False):
     # Publish the service definition
     arcpy.UploadServiceDefinition_server(sd_output_filename, "My Hosted Services")
 
-    logging.info("Feature service published successfully")
+    gb.logger.info("Feature service published successfully")
 
 def toggle_types(docs, types):
     # Find all elements named TypeName
@@ -325,18 +332,16 @@ def set_sharing_props(gis, docs, org=False, all=False, groups="Authoritative Con
                 # Create a new child node and set its value
                 new_node = docs.createTextNode(GroupId)
                 value_list[i].appendChild(new_node)
-def get_web_layer_sharing_draft(gis, schema, outdir, map):
+def get_web_layer_sharing_draft(gb, map):
     map_name = map.name
     service_name = map_name.replace(" ", "_")
     sddraft_filename = service_name + ".sddraft"
-    sddraft_output_filename = os.path.join(outdir, sddraft_filename)
+    sddraft_output_filename = os.path.join(gb.outdir, sddraft_filename)
     sd_filename = service_name + ".sd"
-    sd_output_filename = os.path.join(outdir, sd_filename)
+    sd_output_filename = os.path.join(gb.outdir, sd_filename)
     # propss = json.loads(gb.product.properties_json)
-
+    federated_server_url = f"{gb.configs.federated_server}"
     # Create FeatureSharingDraft and set metadata, portal folder, export data properties, and CIM symbols
-    federated_server_url = "https://dev-portal.egis-usace.us/server"
-
     sddraft = map.getWebLayerSharingDraft("FEDERATED_SERVER", "MAP_IMAGE", f"{map_name}")
     sddraft.federatedServerUrl = federated_server_url
     sddraft.copyDataToServer = False
@@ -345,17 +350,17 @@ def get_web_layer_sharing_draft(gis, schema, outdir, map):
     sddraft.summary = gb.service_description
 
 
-    sddraft.tags = f"ASR, EGIS, USACE, {schema}"
+    sddraft.tags = f"ASR, EGIS, USACE, {gb.product.schema}"
     if gb.tags != '':
         sddraft.tags += f',{gb.tags}'
     sddraft.useLimitations = "These are use limitations"
-    sddraft.portalFolder = f"{schema}"
-    sddraft.serverFolder = f"{schema}"
+    sddraft.portalFolder = f"{gb.product.schema}"
+    sddraft.serverFolder = f"{gb.product.schema}"
     sddraft.useCIMSymbols = True
     sddraft.overwriteExistingService = True
 
 
-    logging.info(f"Exporting service definition to {sddraft_output_filename}")
+    gb.logger.info(f"Exporting service definition to {sddraft_output_filename}")
     # Create Service Definition Draft file
     sddraft.exportToSDDraft(sddraft_output_filename)
     configure_mapserver_capabilities(sddraft_output_filename, "Map,Query,Data")
@@ -365,23 +370,23 @@ def get_web_layer_sharing_draft(gis, schema, outdir, map):
     toggle_types(docs, ["FeatureServer"])
     toggle_feature_capabilities(docs,"Query,Extract")
 
-    set_sharing_props(gis,docs, org=False, all=False, groups="Authoritative Content")
+    set_sharing_props(gb.gis,docs, org=False, all=False, groups="Authoritative Content")
     set_property(docs,"MinInstances", 2)
 
     # Write to new .sddraft file
     sddraft_mod_xml = service_name + '_mod_xml' + '.sddraft'
-    sddraft_mod_xml_file = os.path.join(outdir, sddraft_mod_xml)
+    sddraft_mod_xml_file = os.path.join(gb.outdir, sddraft_mod_xml)
     f = open(sddraft_mod_xml_file, 'w')
     docs.writexml(f)
     f.close()
 
     # Stage Service
-    logging.info(f"Starting Staging of {sddraft_mod_xml_file}")
+    gb.logger.info(f"Starting Staging of {sddraft_mod_xml_file}")
     if os.path.exists(sd_output_filename):
         try:
             os.remove(sd_output_filename)
         except Exception as e:
-            logging.error(f"Could not delete {sd_output_filename}", e)
+            gb.logger.error(f"Could not delete {sd_output_filename}", e)
 
     staged = False
     try:
@@ -391,7 +396,7 @@ def get_web_layer_sharing_draft(gis, schema, outdir, map):
         print(e)
 
     if staged:
-        logging.info(f"Starting Uploading Service Definition: {sd_output_filename}")
+        gb.logger.info(f"Starting Uploading Service Definition: {sd_output_filename}")
 
         try:
             result = arcpy.server.UploadServiceDefinition(in_sd_file=sd_output_filename,
@@ -404,7 +409,7 @@ def get_web_layer_sharing_draft(gis, schema, outdir, map):
 
 
             item_title = f"{map_name}"
-            items = gis.content.search(f"title:{item_title}")
+            items = gb.gis.content.search(f"title:{item_title}")
 
             description = f'''
             The data provided by this service was harvested from the following sources:
@@ -417,61 +422,87 @@ def get_web_layer_sharing_draft(gis, schema, outdir, map):
             for feature_service_item in items:
                 try:
 
-                    fp = rf"D:\projects\eGIS-Web-App\public\static\images\card\usace-{schema.lower()}.jpg"
+                    fp = rf"{gb.configs.thumbnail_path}\usace-{gb.product.schema.lower()}.jpg"
                     feature_service_item.update_thumbnail(file_path=fp)
                     # feature_service_item.content_status = "authoritative"
                     feature_service_item.update(item_properties={'description': f'{description}'})
                     feature_service_item.update()
 
                 except Exception as e:
-                    logging.error("Problem updating {feature_service_item.title} properties", e)
+                    gb.logger.error("Problem updating {feature_service_item.title} properties", e)
 
-            logging.info(f"Successfully Published {item_title}")
+            gb.logger.info(f"Successfully Published {item_title}")
 
         except Exception as e:
-            logging.error("Problem with UploadServiceDefinition {sd_output_filename}", e)
+            gb.logger.error("Problem with UploadServiceDefinition {sd_output_filename}", e)
 
 
-def init_globals() -> Globals:
-    logging.info("Started Load Process, Initializing")
-    now = datetime.datetime.now()
-    args = egis_utils.process_args_publish()
-    gb = Globals(now, args)
-    logging.info(f"Loading Product data for {gb.product.product_id} Source {gb.product.source_id}")
-    return gb
 
+def init():
 
-def main():
-    global gis
-    global project
-    global outdir
-    global logging
-    global gb
-    global gis
-    #
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     now = datetime.datetime.now()
     formatted_date = now.strftime('%Y%m%d%H%M%S')
-    args = process_args_publish()
-    log_dir = args["log_dir"]
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"{formatted_date}_load.log")
-    #
-    logging = initialize_logger(log_file=log_file, debug=True)
-    gb = init_globals()
-    load_product_source_details(logging, gb)
+    args = process_args_load()
+    os.makedirs(args.log_dir, exist_ok=True)
+    log_file = os.path.join(args.log_dir, f"{formatted_date}_load.log")
+    logger = egis_utils.initialize_logger(log_file, debug=True)
+    config_json = None
+    try:
+        config_json = egis_utils.load_json_from_file(args.config_file, logger)
+    except Exception as e:
+        logger.error('Execution failed {e}', e)
+        sys.exit(1)
+
+    return Globals(args, SimpleNamespace(**config_json) , logger)
+
+def process_args_load():
+    parser = argparse.ArgumentParser(description='Process inputs to load data')
+    parser.add_argument(
+        "--data_product_id",
+        type=int,
+        help="Data Product Id",
+    )
+    parser.add_argument(
+        "--source_id",
+        type=int,
+        help="Data Product Source Id",
+    )
+    parser.add_argument(
+        "--config_file",
+        type=str,
+        help="config_file",
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        help="log_dir",
+    )
+    parser.add_argument(
+        "--aws_region",
+        type=str,
+        help="aws_region",
+    )
+    parsed_args = parser.parse_args()
+    return parsed_args
+
+def main():
+
+    gb = init()
+    load_product_source_details(gb)
     product_name = gb.product.collection_name
 
-    gis = GIS("https://dev-portal.egis-usace.us/enterprise", "svc.publisher", "svc.publisher2024!")
+    gb.gis = GIS(f"{gb.configs.egis_portal}",
+              egis_utils.get_secret(gb, f"{gb.configs.db_env}/egis/publisher")["svc_user"],
+              egis_utils.get_secret(gb, f"{gb.configs.db_env}/egis/publisher")["svc_password"])
     #
-    project_path = r"D:\Users\nealie.t\Documents\ArcGIS\Projects\EGIS_Server_Project\EGIS_Server_Project.aprx"
-    project = arcpy.mp.ArcGISProject(project_path)
-    outdir = os.path.dirname(project_path)
+    project_path = rf"{gb.configs.sde_root}\Bronze_ETL_Server.aprx"
+    gb.project = arcpy.mp.ArcGISProject(project_path)
+    gb.outdir = os.path.dirname(project_path)
     try:
-        map = create_map(product_name)
-        get_web_layer_sharing_draft(gis, gb.product.schema, outdir, map)
+        map = create_map(gb)
+        get_web_layer_sharing_draft(gb, map)
     except Exception as e:
-        logging.error("Exception occurred", e)
+        gb.logger.error("Exception occurred", e)
 
 
 if __name__ == "__main__":

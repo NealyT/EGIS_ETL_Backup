@@ -15,7 +15,7 @@ import sys
 import subprocess
 
 from arcgis.features import FeatureLayerCollection, FeatureLayer
-from etl_scripts.utils import *
+from etl_scripts.bronze.utils import *
 
 def postGIS(product, file_path, table_name, host, dbname, user, password):
     ogr_location = r"C:\Program Files\QGIS 3.38.0\bin\ogr2ogr.exe"

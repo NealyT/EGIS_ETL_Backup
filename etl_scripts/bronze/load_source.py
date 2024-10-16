@@ -9,40 +9,33 @@ from arcgis.features import FeatureLayerCollection, FeatureLayer
 import etl_scripts.bronze.utils as egis_utils
 import os
 import datetime
+import argparse
 import pandas as pd
 import sys
-
-
+from types import SimpleNamespace
 
 class Globals:
     def __init__(self, args, configs,logger):
         now = datetime.datetime.now()
         formatted_dts = now
-        sde_root = configs["sde_root"]
-        db_user = configs["db_user"]
-        db_env = configs["db_env"]
 
-        self.sde_connection = f"{sde_root}\{db_user}-{db_env}.sde"
+        self.args = args
+        self.configs = configs
+        self.sde_connection = f"{configs.sde_root}\{configs.db_user}-{configs.db_env}.sde"
         self.dts = formatted_dts
-        self.product = egis_utils.DataProduct(args["data_product_id"], args["source_id"])
-        self.sde_root = sde_root
-        self.db_user = configs["db_user"]
-        self.db_database = configs["db_database"]
-        self.db_env = configs["db_env"]
-        self.db_instance = configs["db_instance"]
+        self.product = egis_utils.DataProduct(args.data_product_id, args.source_id)
         self.user_connection = None
         self.load_schema = None
         self.etl_record = None
         self.load_history = None
         self.load_history_items = []
-        self.catalog_role = configs["catalog_role"]
+        self.catalog_role = configs.catalog_role
         self.entities = None
         self.mapped_columns = None
         self.logger = logger
-        self.aws_region = args["aws_region"]
-        self.etl_writer = args["aws_ss_etl"]
+        self.aws_region = args.aws_region
 
-def test_exists(sql, conn=None):
+def check_exists(gb, sql, conn=None):
     try:
         if conn is None:
             conn = gb.sde_connection
@@ -54,9 +47,9 @@ def test_exists(sql, conn=None):
         gb.logger.error(f"Error: {e}")
 
 
-def load_product_source_details():
+def load_product_source_details(gb):
     try:
-        create_sde_connection(staged_env='dev')
+        egis_utils.create_etl_connection(gb, staged_env='dev')
         gb.logger.info("Retrieving data product details from RDBMS")
         sde_conn = arcpy.ArcSDESQLExecute(gb.sde_connection)
         where_clause = f"where collection_id = {gb.product.product_id} and source_id = {gb.product.source_id}"
@@ -71,7 +64,7 @@ def load_product_source_details():
         gb.product.schema = first_row['collection_schema'].lower()
         gb.load_schema = gb.product.schema
         gb.product.source_path = first_row['path']
-        gb.user_connection = f"{gb.sde_root}\{gb.load_schema}-{gb.db_env}.sde"
+        gb.user_connection = f"{gb.configs.sde_root}\{gb.load_schema}-{gb.configs.db_env}.sde"
 
         # where_clause = f"where table_schema = '{gb.product.schema}'"
         # sql = f"SELECT distinct column_name, column_name_simple, mapped_column_name FROM etl_loader.column_mapping {where_clause}"
@@ -93,12 +86,12 @@ def load_product_source_details():
         gb.logger.error("Error Retrieving data product details from RDBMS", e)
 
 
-def create_load_schema():
+def create_load_schema(gb):
     gb.logger.info(f"Checking if {gb.load_schema} Schema exists")
     test_sql = f"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = '{gb.load_schema}')"
     # test_sql = f"SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = '{gb.load_schema}')"
 
-    exists = test_exists(test_sql)
+    exists = check_exists(gb, test_sql)
     if not exists:
         gb.logger.info(f"Creating {gb.load_schema} User and Schema ")
         arcpy.management.CreateDatabaseUser(
@@ -110,23 +103,23 @@ def create_load_schema():
         )
 
 
-def create_user_connection(staged_env='dev'):
+def create_user_connection(gb, staged_env='dev'):
     gb.logger.info(f"Checking if {gb.user_connection} connection file exists")
     out_name = f"{gb.load_schema}-{staged_env}"
-    connection_file = os.path.join(gb.sde_root, out_name)
+    connection_file = os.path.join(gb.configs.sde_root, out_name)
     sde_connect_file = f'{connection_file}.sde'
     if os.path.exists(sde_connect_file):
         os.remove(sde_connect_file)
     sde_connect_file = arcpy.management.CreateDatabaseConnection(
-        out_folder_path=gb.sde_root,
+        out_folder_path=gb.configs.sde_root,
         out_name=out_name,
         database_platform="POSTGRESQL",
-        instance=gb.db_instance,
+        instance=gb.configs.db_instance,
         account_authentication="DATABASE_AUTH",
         username=gb.load_schema,
         password=gb.load_schema,
         save_user_pass="SAVE_USERNAME",
-        database=gb.db_database,
+        database=gb.configs.db_database,
         # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
         version_type="TRANSACTIONAL",
         version="sde.DEFAULT",
@@ -135,31 +128,6 @@ def create_user_connection(staged_env='dev'):
     gb.logger.info(f"Created connection file {sde_connect_file}")
     return sde_connect_file
 
-def create_sde_connection(staged_env='dev'):
-    gb.logger.info(f"Checking if {gb.sde_connection} connection file exists")
-    out_name = f"{gb.db_user}-{staged_env}"
-    connection_file = os.path.join(gb.sde_root, out_name)
-    sde_connect_file = f'{connection_file}.sde'
-    if os.path.exists(sde_connect_file):
-        os.remove(sde_connect_file)
-
-    sde_connect_file = arcpy.management.CreateDatabaseConnection(
-        out_folder_path=gb.sde_root,
-        out_name=out_name,
-        database_platform="POSTGRESQL",
-        instance=gb.db_instance,
-        account_authentication="DATABASE_AUTH",
-        username=gb.db_user,
-        password=egis_utils.get_secret(gb, f"{staged_env}/egis/writer")["password"],
-        save_user_pass="SAVE_USERNAME",
-        database=gb.db_database,
-        # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
-        version_type="TRANSACTIONAL",
-        version="sde.DEFAULT",
-        role='etl_writer'
-    )
-    gb.logger.info(f"Created connection file {sde_connect_file}")
-    return sde_connect_file
 
 # Recursive method that inserts records into load_history (when load_id is None)
 # or load_history_item for feature classes and tables
@@ -167,14 +135,14 @@ def initialize_load_history(gb, entity=None):
     # entity is None only when initiated from main method
     if entity is None:
         # Test if schema exists, if not one will be created
-        create_load_schema()
+        create_load_schema(gb)
         # Test if connection file exists, if not one will be created
-        create_user_connection()
+        create_user_connection(gb)
 
         gb.logger.info(f"Initiating query of data from url: {gb.product.source_path}")
 
         if gb.product.source_path.lower().endswith('.gpkg'):
-            entity = FeatureLayerCollection()
+            entity = FeatureLayerCollection(None)
             for feature_class in arcpy.ListFeatureClasses(gb.product.source_path):
                 # Export the feature class to the output path
                 flayer = FeatureLayer(feature_class.name, container=entity)
@@ -201,7 +169,7 @@ def initialize_load_history(gb, entity=None):
                 max_id = child.properties.id
 
         # Initialize a sparse array of entities, using max_id as size of array, all values initialized to None
-        gb.entities = [None] * (max_id + 1)
+        gb.entities = [None] * (max_id )
         # Load each entity
         for child in entity.layers:
             initialize_load_history(gb, child)
@@ -217,7 +185,7 @@ def initialize_load_history(gb, entity=None):
     return entity
 
 
-def move_to_egdb_try1(input_gdb):
+def move_to_egdb_try1(gb, input_gdb):
     # DOES NOT WORK becausse of gb.product.schema
     arcpy.env.workspace = input_gdb
     fcs = arcpy.ListFeatureClasses()
@@ -231,7 +199,7 @@ def move_to_egdb_try1(input_gdb):
             arcpy.CopyFeatures_management(input_fc, output_fc)
         gb.logger.info(f"Created {output_fc}")
 
-def move_to_egdb(input_gdb):
+def move_to_egdb(gb, input_gdb):
     # List all feature classes in the input file geodatabase
     arcpy.env.workspace = input_gdb
     feature_classes = arcpy.ListFeatureClasses()
@@ -261,7 +229,7 @@ def move_to_egdb(input_gdb):
     else:
         print("No feature classes found in the input file geodatabase.")
 
-def load_all_to_fdb( items):
+def load_all_to_fdb(gb,  items):
     # Create a new file geodatabase
     revised_name = gb.product.collection_name.replace(" ","_")
     path = f"D:\data\{gb.product.schema}"
@@ -279,21 +247,19 @@ def load_all_to_fdb( items):
     # Use FeatureClassToGeodatabase_conversion to move all layers at once
     # urls = [i.item_path for i in items]
     for item in items:
-        load_entity_to_db_container(item, gdb_path)
+        load_entity_to_db_container(gb, item, gdb_path)
 
     # Import the file geodatabase as a schema
     # move_to_egdb(gdb_path)
     return gdb_path
 
-def load_entity_to_db_container(item, output_fc):
-    # Specify the WKID
-    wkid = 4326
+def load_entity_to_db_container(gb, item, output_fc):
     # item.feature.properties.srid  # Replace with the desired WKID
     # gb.load_history.spatialReference
 
     try:
-        isGDB = len(os.path.splitext(output_fc))>0
-        if isGDB:
+        is_gdb = len(os.path.splitext(output_fc))>0
+        if is_gdb:
             arcpy.env.workspace = output_fc
         item.update_status(gb,"LOADING")
         if item.isTable:
@@ -307,9 +273,9 @@ def load_entity_to_db_container(item, output_fc):
                 arcpy.conversion.ExportFeatures(item.item_path, output_fc)
                 arcpy.AddGlobalIDs_management(output_fc)
             except Exception as ee:
-                gb.logger.info(f"ExportFeatures failed for {item.revised_name}, trying alternative, conversion")
+                gb.logger.info(f"ExportFeatures failed for {item.revised_name}, trying alternative, conversion {ee}")
                 try:
-                    if isGDB:
+                    if is_gdb:
                         arcpy.FeatureClassToGeodatabase_conversion(item.item_path, output_fc)
                         fcs = arcpy.ListFeatureClasses()
                         new_fc = fcs[-1]
@@ -328,14 +294,9 @@ def load_entity_to_db_container(item, output_fc):
         gb.logger.error(e)
 
 
-def load_entity_to_sde(item):
+def load_entity_to_sde(gb, item):
     gb.logger.info(f"Loading {item.revised_name} into SDE")
-    output_fc = f"{gb.user_connection}/{item.revised_name}"
-    # Field mapping
-    field_mapping = arcpy.FieldMappings()
-    fields = item.feature.properties.fields
-    # Specify the WKID
-    wkid = 4326
+    output_fc = f"{gb.user_connection}\{item.revised_name}"
     # item.feature.properties.srid  # Replace with the desired WKID
     # gb.load_history.spatialReference
     try:
@@ -349,7 +310,7 @@ def load_entity_to_sde(item):
         else:
             desc = arcpy.Describe(item.item_path)
             spatial_ref = desc.spatialReference
-            print(f"Spatial Reference Name: {spatial_ref.name}, WKID: {spatial_ref.factoryCode}")
+            # print(f"Spatial Reference Name: {spatial_ref.name}, WKID: {spatial_ref.factoryCode}")
 
             ## TO_DO: Recreation Areas had 0 - Investigate further
             if spatial_ref.factoryCode <= 0:
@@ -389,27 +350,27 @@ def load_entity_to_sde(item):
         gb.logger.error(e)
 
 
-def cleanup():
-    parameters = (gb.catalog_role,
+def cleanup(gb):
+    sql = '''
+    CALL drop_schema_owner('{0}', '{1}', '{2}', true)
+    '''.format(gb.catalog_role,
                   'bronze_catalog',
-                  gb.product.schema,
-                  True)  # Tuple of parameters, if any
+                  gb.product.schema)  # Tuple of parameters, if any
 
     try:
-        arcpy.env.workspace = gb.sde_connection
-
+        sde_conn = arcpy.ArcSDESQLExecute(gb.sde_connection)
+        rows = sde_conn.execute(sql)
         # Execute the stored procedure
-        cursor = arcpy.da.ExecuteCursor(arcpy.ArcSDESQLExecute('drop_schema_owner', parameters))
+        # print(rows)
 
     except Exception as e:
         gb.logger.error("Error removing role", e)
 
-def test_deltas(gdb_path):
+def test_deltas(gb, gdb_path):
 
     file_name, file_extension = os.path.splitext(gdb_path)
     prev_gdb_path = f"{file_name}_Archived.gdb"
-    arcpy.env.workspace = prev_gdb_path
-    feature_classes = arcpy.ListFeatureClasses()
+
     for item in gb.entities:
         current_layer = gdb_path + "/" + item.revised_name
         sdf = pd.DataFrame.spatial.from_featureclass(current_layer)
@@ -429,15 +390,14 @@ def test_deltas(gdb_path):
     return gdb_path
 
 # load_sde loops through array of entities set on global and loads each
-def load_sde():
+def load_sde(gb):
     try:
         gb.logger.info("Initiating load of table to sde")
         gb.etl_record.update_load(gb, 'LOADING')
 
-
         for child in gb.entities:
             if child is not None:  # Array might be sparse
-                load_entity_to_sde(child)
+                load_entity_to_sde(gb, child)
         gb.load_history.complete_load(gb,"COMPLETED")
         gb.etl_record.complete_load(gb,"SUCCESS")
     except Exception as e:
@@ -445,26 +405,57 @@ def load_sde():
         gb.etl_record.complete_load(gb, "FAIL")
         gb.logger.error('Loading failed', e)
 
+def process_args_load():
+    parser = argparse.ArgumentParser(description='Process inputs to load data')
+    parser.add_argument(
+        "--data_product_id",
+        type=int,
+        help="Data Product Id",
+    )
+    parser.add_argument(
+        "--source_id",
+        type=int,
+        help="Data Product Source Id",
+    )
+    parser.add_argument(
+        "--config_file",
+        type=str,
+        help="config_file",
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        help="log_dir",
+    )
+    parser.add_argument(
+        "--aws_region",
+        type=str,
+        help="aws_region",
+    )
+    parsed_args = parser.parse_args()
+    return parsed_args
+
 def init():
-    global gb
+
     now = datetime.datetime.now()
     formatted_date = now.strftime('%Y%m%d%H%M%S')
-    args = egis_utils.process_args_load()
-    log_dir = args["log_dir"]
+    args = process_args_load()
+    log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"{formatted_date}_load.log")
     logger = egis_utils.initialize_logger(log_file, debug=True)
     try:
-        config_json = egis_utils.load_json_from_file(args["config_file"], logger)
+        config_json = egis_utils.load_json_from_file(args.config_file, logger)
     except Exception as e:
+        logger.error('Execution failed {e}', e)
         sys.exit(1)
 
-    gb = Globals(args, config_json, logger)
+    return Globals(args, SimpleNamespace(**config_json), logger)
 
 def main():
-    init()
+    gb =  init()
     # Retrieve product and source data from RDBMS
-    load_product_source_details()
+    load_product_source_details(gb)
 
     # Initialize an ETLRecord instance to manage updates
     gb.etl_record = egis_utils.ETLRecord(gb.product.source_id, "INIT", "RUNNING")
@@ -474,7 +465,7 @@ def main():
 
     # Create load_history and load_history_item records, populate gb.entities array
     # with items that will get loaded into SDE
-    fc = initialize_load_history(gb)
+    initialize_load_history(gb)
 
     # Remove any entry entries in the entities array
     gb.entities = [x for x in gb.entities if x is not None]
@@ -482,9 +473,12 @@ def main():
     # gdb_path = load_all_to_fdb(gb.entities)
     # load_gdb = test_deltas(gdb_path)
 
-    load_sde()
+    load_sde(gb)
     # move_to_egdb(gdb_path)
+
+    cleanup(gb)
     gb.logger.info("Completed Load Process")
 
 if __name__ == "__main__":
+
     main()

@@ -4,7 +4,7 @@ import sys
 import datetime
 import json
 import shutil
-from etl_scripts.utils import *
+from etl_scripts.bronze.utils import *
 from arcgis.gis import ItemProperties, ItemTypeEnum
 
 class LoadGlobals:
@@ -56,25 +56,18 @@ def create_gdb(schema, o):
     tables = arcpy.ListTables()
     table_classes = [fc for fc in tables if f'.{schema}.' in fc]
     sorted_table_classes = sorted(table_classes)
-    #
-    # arcpy.management.CreateFileGDB(output_gdb_path, gdb_name)
-    # print(f"Geodatabase created: {output_gdb_path}/{gdb_name}")
 
-    # Export all layers into the geodatabase at once
-    arcpy.FeatureClassToGeodatabase_conversion(schema_classes, f"{gb.sde_root}/{schema}.gdb")
+    for sde_fc in sorted_feature_classes:
+        featurename = sde_fc.split(".")[-1]
+        feature = f"{o}/{featurename} "
+        # arcpy.CopyFeatures_management(sde_fc, feature)
+        arcpy.conversion.ExportFeatures(sde_fc, feature)
 
-    #
-    # for sde_fc in sorted_feature_classes:
-    #     featurename = sde_fc.split(".")[-1]
-    #     feature = f"{o}/{featurename} "
-    #     # arcpy.CopyFeatures_management(sde_fc, feature)
-    #     arcpy.conversion.ExportFeatures(sde_fc, feature)
-    #
-    # for sde_fc in sorted_table_classes:
-    #     tablename = sde_fc.split(".")[-1]
-    #     feature = f"{o}/{tablename} "
-    #     # arcpy.CopyFeatures_management(sde_fc, feature)
-    #     arcpy.conversion.ExportTable(sde_fc, feature)
+    for sde_fc in sorted_table_classes:
+        tablename = sde_fc.split(".")[-1]
+        feature = f"{o}/{tablename} "
+        # arcpy.CopyFeatures_management(sde_fc, feature)
+        arcpy.conversion.ExportTable(sde_fc, feature)
     print(f"{output_gdb} created")
     return output_gdb
 
@@ -105,7 +98,6 @@ def upload_gdb_zip(o):
     uploaded_item = gis.content.add(item_properties, f"{o}.zip")
     logger.info(f"uploaded {uploaded_item}")
     return uploaded_item
-
 def main():
     global gis
     global project
@@ -137,43 +129,42 @@ def main():
     # output_gdb = create_gdb(schema, o)
     # create_gdb_zip( o)
     # item = upload_gdb_zip(o)
-    # gpkg =  os.path.join(r"D:\data\nsi\nsi_2022_42.gpkg","nsi_2022_42.gpkg")
-    item_props = ItemProperties(title="National Structure Inventory PA",
-                                 item_type=ItemTypeEnum.GEOPACKAGE.value)
-    item = gis.content.add(item_properties=item_props, data =gpkg)
-    # item_props = ItemProperties(title="Coastal Data FDGB Hosted",
-    #                             item_type=ItemTypeEnum.FILE_GEODATABASE.value)
-    # item2 = gis.content.add(item_properties=item_props, data=rf"{o}.zip")
-    # # search_results = gis.content.search('Coastal GDB',item_type="File Geodatabase")
-    # item = search_results[0]
-    #
-    try:
-        pubProps = {}
-        pubProps["hasStaticData"] = 'true'
-        pubProps["name"] = "National Structure Inventory PA"
-        pubProps["title"] = "National Structure Inventory PA"
-        pubProps["maxRecordCount"] = 2000
-        pubProps["layerInfo"] = {"capabilities": "Query"}
+    gpkg =  os.path.join(r"D:\data\nsi","nsi_2022_42.gpkg")
+
+    # Path to the output file geodatabase
+    gdb_file_name = "nsi_2022_42.gdb"
+
+    o = os.path.join(gb.sde_root, f"{gdb_file_name}")
+    # Create the output file geodatabase if it doesn't exist
+    if arcpy.Exists(o):
+        arcpy.management.Delete(o)
+    arcpy.CreateFileGDB_management(out_folder_path = gb.sde_root, out_name = gdb_file_name)
+
+    # List all feature classes in the geopackage
+    # feature_classes = arcpy.ListFeatureClasses(r"D:\data\nsi\nsi_2022_42.gpkg")
+    arcpy.env.workspace = r"D:\data\nsi\nsi_2022_42.gpkg\nsi_2022_42.gpkg"
+    feature_classes = arcpy.ListFeatureClasses()
+    # Iterate over each feature class and export it to the file geodatabase
+    for feature_class in feature_classes:
+        feature_name = feature_class.split('.')[-1]
+        # output_feature_class = arcpy.CreateUniqueName(f"{feature_name}", output_gdb_path)
+        arcpy.conversion.FeatureClassToFeatureClass(feature_class, o, feature_name)
+
+        # item2 = gis.content.add(item_properties=item_props, data=rf"{o}.zip")
+        # # search_results = gis.content.search('Coastal GDB',item_type="File Geodatabase")
+        # item = search_results[0]
+        #
+
+    create_gdb_zip(o)
+    item_props = ItemProperties(title="National Structure Inventory PA 2",
+                                item_type=ItemTypeEnum.FILE_GEODATABASE.value)
+    item2 = gis.content.add(item_properties=item_props, data=rf"{o}.zip")
+    published_item = item2.publish()
+    print(published_item)
+    print(f"Feature service published at: {published_item.url}")
 
 
-        published_item = item.publish()
-        print(published_item)
-        print(f"Feature service published at: {published_item.url}")
-
-        pubProps = {}
-        pubProps["hasStaticData"] = 'true'
-        pubProps["name"] = "Coastal Data"
-        pubProps["title"] = "Coastal Data"
-        pubProps["maxRecordCount"] = 2000
-        pubProps["layerInfo"] = {"capabilities": "Query"}
-
-
-        # published_item = item2.publish()
-        # print(published_item)
-        # print(f"Feature service published at: {published_item.url}")
-
-    except Exception as e:
-        print(e)
+    print("Geopackage converted to file geodatabase successfully.")
 
 
 if __name__ == "__main__":

@@ -6,12 +6,93 @@ import re
 import os
 import psycopg2
 import pandas as pd
-
+from types import SimpleNamespace
+import arcpy
 
 import boto3
 from botocore.exceptions import ClientError
 from sqlalchemy import create_engine
 
+
+def create_catalog_connection(gb, staged_env='dev', connection_name=None):
+    gb.logger.info(f"Checking if {gb.sde_connection} connection file exists")
+    out_name = connection_name
+    if out_name is None:
+        out_name = f"{gb.configs.db_user}-{staged_env}"
+    connection_file = os.path.join(gb.configs.sde_root, out_name)
+    sde_connect_file = f'{connection_file}.sde'
+    if os.path.exists(sde_connect_file):
+        os.remove(sde_connect_file)
+
+    sde_connect_file = arcpy.management.CreateDatabaseConnection(
+        out_folder_path=gb.configs.sde_root,
+        out_name=out_name,
+        database_platform="POSTGRESQL",
+        instance=gb.configs.db_ro_instance,
+        account_authentication="DATABASE_AUTH",
+        username='bronze_catalog',
+        password=get_secret(gb, f"{staged_env}/user/bronze_catalog")["password"],
+        save_user_pass="SAVE_USERNAME",
+        database=gb.configs.db_database,
+        # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
+        version_type="TRANSACTIONAL",
+        version="sde.DEFAULT",
+        role='catalog'
+    )
+    gb.logger.info(f"Created connection file {sde_connect_file}")
+    return f"{sde_connect_file}"
+
+def create_sde_connection(gb, staged_env='dev'):
+    gb.logger.info(f"Checking if {gb.sde_connection} connection file exists")
+    out_name = f"{gb.configs.db_user}-{staged_env}"
+    connection_file = os.path.join(gb.configs.sde_root, out_name)
+    sde_connect_file = f'{connection_file}.sde'
+    if os.path.exists(sde_connect_file):
+        os.remove(sde_connect_file)
+
+    sde_connect_file = arcpy.management.CreateDatabaseConnection(
+        out_folder_path=gb.sde_root,
+        out_name=out_name,
+        database_platform="POSTGRESQL",
+        instance=gb.configs.db_instance,
+        account_authentication="DATABASE_AUTH",
+        username=gb.configs.db_user,
+        password=get_secret(gb, f"{staged_env}/egis/writer")["password"],
+        save_user_pass="SAVE_USERNAME",
+        database=gb.configs.db_database,
+        # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
+        version_type="TRANSACTIONAL",
+        version="sde.DEFAULT",
+        role='etl_writer'
+    )
+    gb.logger.info(f"Created connection file {sde_connect_file}")
+    return sde_connect_file
+
+def create_etl_connection(gb, staged_env='dev'):
+    gb.logger.info(f"Checking if {gb.sde_connection} connection file exists")
+    out_name = f"{gb.configs.db_user}-{staged_env}"
+    connection_file = os.path.join(gb.configs.sde_root, out_name)
+    sde_connect_file = f'{connection_file}.sde'
+    if os.path.exists(sde_connect_file):
+        os.remove(sde_connect_file)
+
+    sde_connect_file = arcpy.management.CreateDatabaseConnection(
+        out_folder_path=gb.configs.sde_root,
+        out_name=out_name,
+        database_platform="POSTGRESQL",
+        instance=gb.configs.db_instance,
+        account_authentication="DATABASE_AUTH",
+        username=gb.configs.db_user,
+        password=get_secret(gb, f"{staged_env}/egis/writer")["password"],
+        save_user_pass="SAVE_USERNAME",
+        database=gb.configs.db_database,
+        # schema="",  This option only applies to Oracle databases that contain at least one user–schema geodatabase. The default value for this parameter is to use the sde schema geodatabase.
+        version_type="TRANSACTIONAL",
+        version="sde.DEFAULT",
+        role='etl_writer'
+    )
+    gb.logger.info(f"Created connection file {sde_connect_file}")
+    return sde_connect_file
 # Set env, CRYPTOGRAPHY_OPENSSL_NO_LEGACY=true
 def load_json_from_file(file_path, logger = None):
     config_json = None
@@ -200,10 +281,10 @@ class ETLRecord:
 
 def insert_record(gb, source_record):
     return_id = -1
-    with psycopg2.connect(dbname=gb.db_database,
-                          user=gb.db_user,
-                          password=get_secret(gb, f"{gb.db_env}/egis/writer")["password"],
-                          host=gb.db_instance) as conn:
+    with psycopg2.connect(dbname=gb.configs.db_database,
+                          user=gb.configs.db_user,
+                          password=get_secret(gb, f"{gb.configs.db_env}/egis/writer")["password"],
+                          host=gb.configs.db_instance) as conn:
         with conn.cursor() as cur:
             query = None
             if isinstance(source_record, LoadHistory):
@@ -240,10 +321,10 @@ def insert_record(gb, source_record):
 
 def update_record(source_record, gb, update_fields):
     return_id = -1
-    with psycopg2.connect(dbname=gb.db_database,
-                          user=gb.db_user,
-                          password=get_secret(gb, f"{gb.db_env}/egis/writer")["password"],
-                          host=gb.db_instance) as conn:
+    with psycopg2.connect(dbname=gb.configs.db_database,
+                          user=gb.configs.db_user,
+                          password=get_secret(gb, f"{gb.configs.db_env}/egis/writer")["password"],
+                          host=gb.configs.db_instance) as conn:
         with conn.cursor() as cur:
             query = None
             source_dict = source_record.getDict()
@@ -291,7 +372,7 @@ def get_data(gb, table_name):
     df = None
     try:
         # Connect to the database with the password
-        engine = create_engine(f'postgresql://{gb.db_user}:{get_secret(gb, f"{gb.db_env}/egis/writer")["password"]}@{gb.db_instance}/{gb.db_database}')
+        engine = create_engine(f'postgresql://{gb.configs.db_user}:{get_secret(gb, f"{gb.db_env}/egis/writer")["password"]}@{gb.db_instance}/{gb.db_database}')
         # engine = create_engine('postgresql://user:password@host:port/database')
 
         # engine = create_engine(f'postgresql+psycopg2://{db_username}:{db_password}@{db_host}:{db_port}/{db_name}')
@@ -349,11 +430,6 @@ def process_args_load():
         type=str,
         help="aws_region",
     )
-    parser.add_argument(
-        "--aws_ss_etl",
-        type=str,
-        help="aws_ss_etl",
-    )
     parsed_args = parser.parse_args()
     args = vars(parsed_args)
     return args
@@ -386,9 +462,14 @@ def process_args_publish():
         type=str,
         help="log_dir",
     )
+    parser.add_argument(
+        "--aws_region",
+        type=str,
+        help="aws_region",
+    )
     parsed_args = parser.parse_args()
     args = vars(parsed_args)
-    return args
+    return SimpleNamespace(**args)
 
 
 
@@ -413,7 +494,7 @@ def get_secret(gb, secret_name):
     session = boto3.session.Session()
     client = session.client(
         service_name='secretsmanager',
-        region_name=gb.aws_region
+        region_name=gb.configs.aws_region
     )
 
     try:
