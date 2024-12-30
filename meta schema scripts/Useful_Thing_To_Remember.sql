@@ -16,6 +16,33 @@ REVOKE ALL ON DATABASE egdb FROM test7;
 drop schema test7
 REVOKE test7 FROM egdb;
 drop role test7
+-------------------------------------------------------------------------------
+	delete from sde.sde_layers l WHERE l.schema='ib' and not exists (SELECT 1 FROM information_schema.tables s where s.table_schema = l.schema
+	and s.table_name = l.table_name);
+
+
+select * FROM sde.spatial_indexes WHERE layer_id = 'current_ice_jams_2412270310';
+
+select * from sde.sde_layers where schema = 'ib'
+	
+
+select *	 FROM information_schema.tables
+
+select * from
+ sde.sde_layers l
+WHERE not exists (SELECT 1 FROM information_schema.tables s where s.table_schema = l.schema
+	and s.table_name = l.table_name);
+
+SELECT 
+    schemaname,
+    tablename,
+    indexname,
+    indexdef
+FROM 
+    pg_indexes
+WHERE 
+    schemaname = 'ib';
+
 ------------------------------------------------------------------------
 INSERT INTO etl_loader.column_mapping (column_name, column_name_simple, mapped_column_name, table_schema)
 (with a as (
